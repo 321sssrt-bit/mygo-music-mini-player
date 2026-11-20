@@ -85,11 +85,11 @@ func (p *Player) View(c *ui.Context) {
 	expandProgress := animateMotion(root, "expand", targetExpand, expandSpring, reduceMotion)
 
 	root.Children(func() {
-		if p.state.Expanded || expandProgress > 0.5 {
-			p.buildExpanded(c, pal, tr, expandProgress, reduceMotion)
+		if expandProgress <= 0.01 {
+			p.buildResting(c, pal, tr, reduceMotion)
 			return
 		}
-		p.buildResting(c, pal, tr, reduceMotion)
+		p.buildExpanded(c, pal, tr, expandProgress, reduceMotion)
 	})
 }
 
@@ -190,22 +190,27 @@ func (p *Player) buildResting(c *ui.Context, pal surfacePalette, tr copyStrings,
 
 func (p *Player) buildExpanded(c *ui.Context, pal surfacePalette, tr copyStrings, expandProgress float32, reduceMotion bool) {
 	const (
-		cardW      = ExpandedWidth - 2
-		cardH      = ExpandedHeight - 2
-		cardRadius = 18
+		restingTile = 62
+		cardW       = ExpandedWidth - 2
+		cardH       = ExpandedHeight - 2
+		restRadius  = 14
+		cardRadius  = 18
 	)
 
-	cardScale := float32(1.0)
-	cardOpacity := float32(1.0)
-	if !reduceMotion && expandProgress != 1 {
-		cardScale = 0.92 + 0.08*expandProgress
-		cardOpacity = clamp32(expandProgress*1.25, 0.2, 1.0)
+	clamped := clamp32(expandProgress, 0, 1)
+	curW := restingTile + (cardW-restingTile)*clamped
+	curH := restingTile + (cardH-restingTile)*clamped
+	curRadius := restRadius + (cardRadius-restRadius)*clamped
+
+	overshootScale := float32(1.0)
+	if !reduceMotion && expandProgress > 1 {
+		overshootScale = 1 + (expandProgress-1)*0.25
 	}
 
 	card := ui.Box(c).
 		Key("expanded-card").
-		Size(cardW, cardH).
-		Radius(cardRadius).
+		Size(curW, curH).
+		Radius(curRadius).
 		LinearGradient(ui.LinearGradient{
 			From:  pal.cardTop,
 			To:    pal.cardBottom,
@@ -213,11 +218,10 @@ func (p *Player) buildExpanded(c *ui.Context, pal surfacePalette, tr copyStrings
 			Oklab: true,
 		}).
 		Border(1, pal.cardBorder).
-		Clip().
-		Opacity(cardOpacity)
+		Clip()
 
-	if cardScale != 1 {
-		card.Transform(ui.Scaling(cardScale, cardScale))
+	if overshootScale != 1 {
+		card.Transform(ui.Scaling(overshootScale, overshootScale))
 	}
 
 	card.Children(func() {
@@ -239,29 +243,52 @@ func (p *Player) buildExpanded(c *ui.Context, pal surfacePalette, tr copyStrings
 				},
 			})
 
-		// Vertical card content stack.
-		ui.Column(c).
-			Fill().
-			Padding(28, 12, 6, 12).
-			AlignItems(ui.Center).
+		if clamped < 0.35 {
+			ui.Box(c).
+				Fill().
+				Center().
+				Children(func() {
+					p.buildResting(c, pal, tr, reduceMotion)
+				})
+			return
+		}
+
+		contentOpacity := float32(1.0)
+		if !reduceMotion && clamped < 0.995 {
+			contentOpacity = clamp32((clamped-0.30)/0.55, 0, 1)
+		}
+
+		// Vertical card content stack at target card geometry, centered and clipped while the frame grows.
+		ui.Box(c).
+			Absolute().
+			Left((curW-cardW)/2).
+			Top((curH-cardH)/2).
+			Size(cardW, cardH).
+			Opacity(contentOpacity).
 			Children(func() {
-				p.buildExpandedArtwork(c, pal, tr, reduceMotion)
+				ui.Column(c).
+					Fill().
+					Padding(28, 12, 6, 12).
+					AlignItems(ui.Center).
+					Children(func() {
+						p.buildExpandedArtwork(c, pal, tr, reduceMotion)
 
-				ui.Box(c).Height(7)
-				p.buildTrackInfo(c, pal, tr)
+						ui.Box(c).Height(7)
+						p.buildTrackInfo(c, pal, tr)
 
-				ui.Box(c).Height(7)
-				p.buildProgressBar(c, pal, tr, reduceMotion)
+						ui.Box(c).Height(7)
+						p.buildProgressBar(c, pal, tr, reduceMotion)
 
-				ui.Box(c).Height(4)
-				p.buildTransportRow(c, pal, tr, reduceMotion)
+						ui.Box(c).Height(4)
+						p.buildTransportRow(c, pal, tr, reduceMotion)
+					})
+
+				// Top-right frameless window action buttons.
+				p.buildWindowTools(c, pal, tr, reduceMotion)
+
+				// Top-centered fading volume percentage capsule bubble.
+				p.buildVolumeBubble(c, pal, tr)
 			})
-
-		// Top-right frameless window action buttons.
-		p.buildWindowTools(c, pal, tr, reduceMotion)
-
-		// Top-centered fading volume percentage capsule bubble.
-		p.buildVolumeBubble(c, pal, tr)
 	})
 }
 
@@ -318,10 +345,11 @@ func (p *Player) buildExpandedArtwork(c *ui.Context, pal surfacePalette, tr copy
 
 		tf := ui.Scaling(breathScale, breathScale)
 		if !reduceMotion && (rotX != 0 || rotY != 0) {
-			tf = ui.Perspective(420).
+			// Apply 3D rotations before Perspective because Transform.Then runs left-to-right.
+			tf = tf.
 				Then(ui.RotationX(rotX)).
 				Then(ui.RotationY(rotY)).
-				Then(ui.Scaling(breathScale, breathScale))
+				Then(ui.Perspective(420))
 		}
 
 		cover := ui.Box(c).
@@ -409,6 +437,9 @@ func (p *Player) buildTrackInfo(c *ui.Context, pal surfacePalette, tr copyString
 
 func (p *Player) buildProgressBar(c *ui.Context, pal surfacePalette, tr copyStrings, reduceMotion bool) {
 	canSeek := p.state.Media.Available && p.state.Media.DurationMS > 0
+	if !canSeek {
+		p.scrubbing = false
+	}
 	ratio := p.progressRatio()
 	displayMS := int64(0)
 	if canSeek {
@@ -431,6 +462,7 @@ func (p *Player) buildProgressBar(c *ui.Context, pal surfacePalette, tr copyStri
 
 	bar.HandleInput(func(ev ui.InputEvent) bool {
 		if !canSeek {
+			p.scrubbing = false
 			return false
 		}
 		width := c.Resolve(barRef).Bounds().W
@@ -702,7 +734,7 @@ func (p *Player) buildToolButton(
 
 func (p *Player) buildVolumeBubble(c *ui.Context, pal surfacePalette, tr copyStrings) {
 	targetOpacity := p.volumeBubbleTarget(c)
-	pct := int(math.Round(clamp01(p.state.Volume) * 100))
+	pct := int(math.Round(p.displayVolume() * 100))
 
 	holder := ui.Box(c).
 		Key("volume-bubble-holder").

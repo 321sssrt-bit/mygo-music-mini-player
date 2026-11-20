@@ -32,6 +32,26 @@ func imagesEqual(a, b *image.RGBA) bool {
 	return a.Bounds() == b.Bounds() && bytes.Equal(a.Pix, b.Pix)
 }
 
+func opaqueBounds(img *image.RGBA) image.Rectangle {
+	b := img.Bounds()
+	minX, minY := b.Max.X, b.Max.Y
+	maxX, maxY := b.Min.X, b.Min.Y
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			if img.RGBAAt(x, y).A > 16 {
+				minX = min(minX, x)
+				minY = min(minY, y)
+				maxX = max(maxX, x+1)
+				maxY = max(maxY, y+1)
+			}
+		}
+	}
+	if minX >= maxX || minY >= maxY {
+		return image.Rectangle{}
+	}
+	return image.Rect(minX, minY, maxX, maxY)
+}
+
 func TestWriteFrameDimensionsAndScenes(t *testing.T) {
 	for _, size := range []image.Point{{X: RestingSize, Y: RestingSize}, {X: ExpandedWidth, Y: ExpandedHeight}} {
 		t.Run(fmt.Sprintf("default-%dx%d", size.X, size.Y), func(t *testing.T) {
@@ -264,6 +284,42 @@ func TestCoverTiltSheenAndReduceMotion(t *testing.T) {
 		t.Fatal("expected pointer hover over cover to render 3D tilt and specular sheen")
 	}
 
+	// Perspective foreshortening: hovering near the horizontal edge with RotationY + Perspective
+	// makes one vertical edge of the cover taller than the opposite edge.
+	solidArt := solidArtworkPNG(t, color.NRGBA{R: 255, G: 20, B: 20, A: 255})
+	perspState := baseState
+	perspState.Media.Artwork = solidArt
+	pPersp := New(perspState, Actions{})
+	tPersp := ui.NewTesterWith(pPersp.View, ExpandedWidth, ExpandedHeight, ui.TesterOptions{Dark: true})
+	perspArt, ok := tPersp.Access("专辑封面")
+	if !ok {
+		t.Fatal("perspective test artwork element not found")
+	}
+	tPersp.Move(perspArt.Bounds.X+perspArt.Bounds.W*0.95, perspArt.Bounds.Y+perspArt.Bounds.H*0.50)
+	tPersp.Advance(350 * time.Millisecond)
+	perspImg := tPersp.Image()
+	measureCoverSpan := func(x int) int {
+		top, bottom := -1, -1
+		for y := int(perspArt.Bounds.Y) - 4; y <= int(perspArt.Bounds.Y+perspArt.Bounds.H)+4; y++ {
+			c := perspImg.RGBAAt(x, y)
+			if int(c.R)-int(c.G) > 120 && int(c.R)-int(c.B) > 120 {
+				if top == -1 {
+					top = y
+				}
+				bottom = y
+			}
+		}
+		if top == -1 {
+			return 0
+		}
+		return bottom - top + 1
+	}
+	leftSpan := measureCoverSpan(int(perspArt.Bounds.X) + 8)
+	rightSpan := measureCoverSpan(int(perspArt.Bounds.X+perspArt.Bounds.W) - 8)
+	if leftSpan == 0 || rightSpan == 0 || leftSpan == rightSpan {
+		t.Fatalf("expected 3D perspective foreshortening between left (%d) and right (%d) cover edges", leftSpan, rightSpan)
+	}
+
 	// Reduce Motion enabled: hovering cover keeps tilt & sheen disabled.
 	rmState := baseState
 	rmState.Settings.Host.ReduceMotion = true
@@ -315,6 +371,17 @@ func TestVolumeBubbleAppearanceAndAutoFade(t *testing.T) {
 	}
 	if _, ok := tester.Access("音量 72%"); !ok {
 		t.Fatal("expected accessible volume status label")
+	}
+
+	// Updating media position via SetState while the timed bubble is active must preserve 72%.
+	updated := state
+	updated.Media.PositionMS = 95000
+	updated.Volume = 0
+	updated.VolumeVisible = false
+	p.SetState(updated)
+	tester.Frame()
+	if !tester.HasText("72%") || tester.HasText("0%") {
+		t.Fatalf("expected active volume bubble to keep 72%% after media snapshot update; texts=%v", tester.Texts())
 	}
 
 	// Still visible during hold window.
@@ -387,12 +454,87 @@ func TestExpandSpringTransition(t *testing.T) {
 	if tester.HasText("春日影") {
 		t.Fatal("resting state should not show expanded track title")
 	}
+	restBox := opaqueBounds(tester.Image())
+	if restBox.Dx() > 66 || restBox.Dy() > 66 {
+		t.Fatalf("resting bounds = %dx%d; want ~62x62", restBox.Dx(), restBox.Dy())
+	}
 
 	state.Expanded = true
 	p.SetState(state)
 	tester.Frame()
+	firstFrameBox := opaqueBounds(tester.Image())
+	if firstFrameBox.Dx() > 70 || firstFrameBox.Dy() > 70 {
+		t.Fatalf("first expand frame jumped to %dx%d; want smooth spring start near 62x62", firstFrameBox.Dx(), firstFrameBox.Dy())
+	}
+
+	tester.Advance(90 * time.Millisecond)
+	midBox := opaqueBounds(tester.Image())
+	if midBox.Dx() <= restBox.Dx()+4 || midBox.Dx() >= ExpandedWidth-6 || midBox.Dy() <= restBox.Dy()+4 || midBox.Dy() >= ExpandedHeight-6 {
+		t.Fatalf("mid-expand bounds = %dx%d; want intermediate size between %dx%d and %dx%d", midBox.Dx(), midBox.Dy(), restBox.Dx(), restBox.Dy(), ExpandedWidth, ExpandedHeight)
+	}
+
 	tester.Advance(ExpandDuration + 100*time.Millisecond)
+	finalBox := opaqueBounds(tester.Image())
+	if finalBox.Dx() < ExpandedWidth-4 || finalBox.Dy() < ExpandedHeight-4 {
+		t.Fatalf("final expanded bounds = %dx%d; want ~%dx%d", finalBox.Dx(), finalBox.Dy(), ExpandedWidth-2, ExpandedHeight-2)
+	}
 	if !tester.HasText("春日影") {
 		t.Fatal("expanded state should show track title after spring transition")
+	}
+}
+
+func TestProgressScrubClearedWhenMediaUnavailable(t *testing.T) {
+	seekCalls := 0
+	state := State{
+		Expanded: true,
+		Media: bridge.MediaSnapshot{
+			Available:  true,
+			Title:      "春日影",
+			Artist:     "MyGO!!!!!",
+			Artwork:    sampleCoverArtwork(),
+			Playing:    true,
+			DurationMS: 200000,
+			PositionMS: 86000,
+		},
+		Settings: bridge.SettingsSnapshot{
+			Host: bridge.HostSettings{Appearance: "dark", Language: "zh-CN"},
+		},
+	}
+	p := New(state, Actions{
+		OnSeekMS: func(int64) { seekCalls++ },
+	})
+	tester := ui.NewTesterWith(p.View, ExpandedWidth, ExpandedHeight, ui.TesterOptions{Dark: true})
+
+	barInfo, ok := tester.Access("播放进度")
+	if !ok {
+		t.Fatal("progress bar not found")
+	}
+	cy := barInfo.Bounds.Y + barInfo.Bounds.H/2
+	scrubX := barInfo.Bounds.X + barInfo.Bounds.W*0.80
+	tester.Press(scrubX, cy)
+	tester.Move(scrubX, cy)
+
+	// Media drops while dragging.
+	unavailable := state
+	unavailable.Media = bridge.MediaSnapshot{}
+	p.SetState(unavailable)
+	tester.Frame()
+	tester.Release(scrubX, cy)
+
+	// Media returns at 43% (86000ms); progress must reflect snapshot, not stale 80% drag.
+	p.SetState(state)
+	tester.Frame()
+	tester.Move(2, 2)
+	tester.Advance(200 * time.Millisecond)
+
+	barAfter, ok := tester.Access("播放进度")
+	if !ok {
+		t.Fatal("progress bar not found after media restore")
+	}
+	if barAfter.Now != 86000 {
+		t.Fatalf("progress bar Now = %v; want 86000 (43%%)", barAfter.Now)
+	}
+	if seekCalls != 0 {
+		t.Fatalf("seekCalls = %d; want 0 after unavailable release", seekCalls)
 	}
 }

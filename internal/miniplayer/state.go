@@ -61,6 +61,7 @@ type Player struct {
 	scrubRatio  float64
 	volumeTimed bool
 	volumeShown time.Time
+	timedVolume float64
 }
 
 // New creates a mini player view controller from an initial state and action hooks.
@@ -73,15 +74,28 @@ func New(state State, actions Actions) *Player {
 // SetState replaces the rendered state snapshot and refreshes cached artwork only when bytes change.
 func (p *Player) SetState(state State) {
 	p.state = state
+	if !state.Media.Available || state.Media.DurationMS <= 0 {
+		p.scrubbing = false
+	}
+	if state.VolumeVisible {
+		p.timedVolume = clamp01(state.Volume)
+	}
 	p.syncArtwork(state.Media.Artwork)
 }
 
 // ShowVolume displays the top volume percentage bubble for the given [0, 1] level
 // and schedules its fade-out relative to now.
 func (p *Player) ShowVolume(level float64, now time.Time) {
-	p.state.Volume = clamp01(level)
+	p.timedVolume = clamp01(level)
 	p.volumeTimed = true
 	p.volumeShown = now
+}
+
+func (p *Player) displayVolume() float64 {
+	if p.state.VolumeVisible {
+		return clamp01(p.state.Volume)
+	}
+	return p.timedVolume
 }
 
 func (p *Player) syncArtwork(raw []byte) {
