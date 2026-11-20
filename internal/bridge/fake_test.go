@@ -52,7 +52,6 @@ func TestHostBridgeSnapshots(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(gotMedia, media) {
 		t.Fatalf("media = %+v, %v; want %+v", gotMedia, err, media)
 	}
-	t.Logf("media=%+v", gotMedia)
 	media.Artwork[0] = 9
 	gotMedia.Artwork[1] = 9
 	gotMedia, err = host.Media()
@@ -63,8 +62,6 @@ func TestHostBridgeSnapshots(t *testing.T) {
 	if err != nil || gotSettings != settings {
 		t.Fatalf("settings = %+v, %v; want %+v", gotSettings, err, settings)
 	}
-	t.Logf("host states: absent, unknown, visible, hidden, minimized; wakes=%d; settings=%+v",
-		fake.Effects().WakeCount, gotSettings)
 }
 
 func TestHostBridgePlaybackAndAudio(t *testing.T) {
@@ -124,8 +121,6 @@ func TestHostBridgePlaybackAndAudio(t *testing.T) {
 	if err != nil || !available || level != 0 {
 		t.Fatalf("silent peak = %v, %v, %v", level, available, err)
 	}
-	t.Logf("playback=%v seekMS=%v volume=%v silent peak=%v (available=%t); absent peak available=false",
-		effects.Playback, effects.SeeksMS, volume, level, available)
 }
 
 func TestHostBridgeRegistrations(t *testing.T) {
@@ -141,7 +136,6 @@ func TestHostBridgeRegistrations(t *testing.T) {
 	if !slices.Equal(got, argv) {
 		t.Fatalf("startup argv = %q; want %q", got, argv)
 	}
-	t.Logf("startup argv=%q", got)
 	argv[0] = "changed input"
 	got[1] = "changed output"
 	if got := fake.Effects().LoginStartup; !slices.Equal(got, []string{"mini-player", "--guard"}) {
@@ -172,5 +166,4 @@ func TestHostBridgeRegistrations(t *testing.T) {
 	if fake.PressHotkey() || fake.Effects().Hotkey != "" {
 		t.Fatal("hotkey still active after removal")
 	}
-	t.Logf("startup argv cleared; hotkey %s fired, then was removed", fired)
 }

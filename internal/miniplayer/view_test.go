@@ -29,7 +29,6 @@ func TestBlankFrame(t *testing.T) {
 					}
 				}
 			}
-			t.Logf("PNG %dx%d: %d transparent pixels", size.X, size.Y, size.X*size.Y)
 		})
 	}
 }
