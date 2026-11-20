@@ -71,7 +71,6 @@ func TestLoopbackControl(t *testing.T) {
 	if entry.Status != initial {
 		t.Fatalf("discovery status = %+v", entry.Status)
 	}
-	t.Logf("random loopback endpoint %s, token length 256 bits", entry.Address)
 
 	client := &http.Client{Timeout: 3 * time.Second}
 	for _, tc := range []struct {
@@ -128,9 +127,6 @@ func TestLoopbackControl(t *testing.T) {
 			if persisted := readDiscovery(t, dir); persisted.Status != tc.status || persisted.Token != entry.Token || persisted.Address != entry.Address {
 				t.Fatal("discovery did not match the returned status or changed credentials")
 			}
-			t.Logf("%s %s -> %d %+v", tc.method, tc.route, resp.StatusCode, got)
-		} else {
-			t.Logf("%s %s -> %d", tc.method, tc.route, resp.StatusCode)
 		}
 	}
 
@@ -144,7 +140,6 @@ func TestLoopbackControl(t *testing.T) {
 		resp.Body.Close()
 		t.Fatal("closed server still accepts requests")
 	}
-	t.Log("close removed discovery and stopped the listener")
 }
 
 func TestPublishOverlappingDiscoveryRead(t *testing.T) {
@@ -178,7 +173,6 @@ func TestPublishOverlappingDiscoveryRead(t *testing.T) {
 	if current := readDiscovery(t, dir); old.Status != initial || current.Status != next || old.Token != current.Token {
 		t.Fatal("discovery reader did not get a complete old or new snapshot")
 	}
-	t.Logf("open handle saw %+v; a fresh reader saw %+v", old.Status, next)
 
 	currentFile, err := os.Open(filepath.Join(dir, control.StateFile))
 	if err != nil {
@@ -195,7 +189,6 @@ func TestPublishOverlappingDiscoveryRead(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, control.StateFile)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("a concurrent reader prevented discovery cleanup: %v", err)
 	}
-	t.Log("close removed discovery despite an overlapping reader")
 }
 
 func TestSingleInstanceAcrossProcesses(t *testing.T) {
@@ -269,5 +262,4 @@ func TestSingleInstanceAcrossProcesses(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	t.Log("duplicate start returned ErrAlreadyRunning, discovery stayed unchanged, restart succeeded after process kill and clean close")
 }

@@ -38,7 +38,6 @@ func expectState(t *testing.T, ctx context.Context, states <-chan lifecycle.Stat
 		if got != want {
 			t.Fatalf("transition = %s, want %s", got, want)
 		}
-		t.Logf("transition = %s", got)
 	case <-ctx.Done():
 		t.Fatalf("waiting for %s: %v", want, ctx.Err())
 	}
@@ -51,7 +50,6 @@ func expectExit(t *testing.T, ctx context.Context, done <-chan error) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Log("Run returned after final cleanup")
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
@@ -104,7 +102,6 @@ func TestRefreshReturnsDuringFinalCleanup(t *testing.T) {
 		if err := c.Refresh(ctx); err == nil || errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("refresh while stopping = %v, want stopped error", err)
 		}
-		t.Log("refresh returned a stopped error during final cleanup")
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -130,7 +127,6 @@ func TestGuardLifecycle(t *testing.T) {
 	if got := host.Effects().LoginStartup; !slices.Equal(got, command) {
 		t.Fatalf("registered command = %v, want %v", got, command)
 	}
-	t.Logf("guard enabled; login startup argv = %v", host.Effects().LoginStartup)
 
 	snapshot.Host = bridge.HostState{}
 	host.SetSnapshot(snapshot)
@@ -144,7 +140,6 @@ func TestGuardLifecycle(t *testing.T) {
 	if got := host.Effects().LoginStartup; len(got) != 0 {
 		t.Fatalf("disabled guard left startup command %v", got)
 	}
-	t.Log("guard disabled; login startup entry removed")
 	expectState(t, ctx, states, lifecycle.Stopped)
 	expectExit(t, ctx, done)
 }
@@ -181,5 +176,4 @@ func TestFailedGuardRefreshKeepsWaiting(t *testing.T) {
 	snapshot.Host.Running = true
 	host.SetSnapshot(snapshot)
 	expectState(t, ctx, states, lifecycle.Active)
-	t.Log("failed removal was returned to caller; guard still detected host startup")
 }
