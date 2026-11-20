@@ -1,0 +1,70 @@
+{
+  "id": "mini-player",
+  "name": "Mini Player",
+  "version": "0.1.0",
+  "minAppVersion": "0.1.25",
+  "main": "index.js",
+  "permissions": {
+    "process": [
+      "bin/mini-player-windows-amd64.exe",
+      "bin/mini-player-windows-arm64.exe",
+      "bin/mini-player-linux-amd64",
+      "bin/mini-player-linux-arm64"
+    ]
+  },
+  "settings": [
+    {
+      "key": "displayPolicy",
+      "label": "Display policy",
+      "help": "Auto-Link follows the main window. Pinned Display keeps Mini Player visible.",
+      "type": "select",
+      "options": [
+        {
+          "value": "auto",
+          "label": "Auto-Link"
+        },
+        {
+          "value": "pinned",
+          "label": "Pinned Display"
+        }
+      ]
+    },
+    {
+      "key": "smokeOverride",
+      "label": "Smoke progress",
+      "help": "Follow the host setting, always show smoke, or turn it off.",
+      "type": "select",
+      "options": [
+        {
+          "value": "follow",
+          "label": "Follow host"
+        },
+        {
+          "value": "on",
+          "label": "Always on"
+        },
+        {
+          "value": "off",
+          "label": "Off"
+        }
+      ]
+    },
+    {
+      "key": "guardMode",
+      "label": "Guard mode",
+      "help": "Start at login and wait for MyGo Music. Turn off to remove the login startup entry.",
+      "type": "boolean"
+    },
+    {
+      "key": "hotkey",
+      "label": "Global shortcut",
+      "help": "Toggle Mini Player visibility. Leave blank to disable the shortcut.",
+      "type": "text"
+    }
+  ],
+  "navigation": [
+    {
+      "builtin": "home"
+    }
+  ]
+}
