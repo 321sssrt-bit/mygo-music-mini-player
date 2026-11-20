@@ -135,18 +135,32 @@ for (const target of Object.keys(binaries)) {
     const [account, home] = await Promise.all([plugin.account(), plugin.home()]);
     assert.equal(account, null);
     assert.equal(home.subtitle, "Running · Hidden · Auto-Link");
+    assert.equal(home.sections[0].title, home.subtitle);
     assert.deepEqual(launches.filter(([action]) => action === "serve"), [["serve", "--data-dir", dataDir]]);
-    assert.equal(home.sections[0].links[0].page, "show");
-    assert.equal((await plugin.browse({ page: home.sections[0].links[0].page })).subtitle, "Running · Visible · Auto-Link");
-    assert.equal((await plugin.browse({ page: "hide" })).subtitle, "Running · Hidden · Auto-Link");
-    assert.equal((await plugin.browse({ page: home.sections[0].links[1].page })).subtitle, "Running · Visible · Auto-Link");
+    const visited = new Map();
+    async function click(page, row) {
+      const id = page.sections[0].links[row].page;
+      if (!visited.has(id)) visited.set(id, await plugin.browse({ page: id }));
+      return visited.get(id);
+    }
+    const shown = await click(home, 0);
+    assert.equal(shown.subtitle, "Running · Visible · Auto-Link");
+    const hidden = await click(shown, 0);
+    assert.equal(hidden.subtitle, "Running · Hidden · Auto-Link");
+    assert.equal((await plugin.browse({ page: home.sections[0].links[0].page })).subtitle, hidden.subtitle);
+    const shownAgain = await click(hidden, 0);
+    assert.equal(shownAgain.subtitle, "Running · Visible · Auto-Link");
+    const reset = await click(shownAgain, 1);
+    assert.equal(reset.subtitle, "Running · Visible · Auto-Link");
+    assert.equal((await click(reset, 1)).subtitle, reset.subtitle);
     await save("displayPolicy", "pinned");
     assert.equal((await plugin.home()).subtitle, "Running · Visible · Pinned Display");
     assert.deepEqual(requests.filter(([method]) => method === "POST"), [
-      ["POST", "/show"], ["POST", "/hide"], ["POST", "/reset-position"], ["POST", "/refresh"],
+      ["POST", "/show"], ["POST", "/hide"], ["POST", "/show"],
+      ["POST", "/reset-position"], ["POST", "/reset-position"], ["POST", "/refresh"],
     ]);
-    assert.equal(await readFile(join(dataDir, "actions"), "utf8"), "/show\n/hide\n/reset-position\n/refresh\n");
-    console.log(`${target}: hidden → visible → hidden → reset to visible → pinned`);
+    assert.equal(await readFile(join(dataDir, "actions"), "utf8"), "/show\n/hide\n/show\n/reset-position\n/reset-position\n/refresh\n");
+    console.log(`${target}: show → hide → show again → reset twice → pinned`);
     if (target === "windows-amd64") {
       const initial = await json(join(dataDir, "control.json"));
       await save("guardMode", "true");
@@ -172,7 +186,9 @@ for (const target of Object.keys(binaries)) {
 for (const language of Object.keys(locales)) {
   const denied = await sandbox("windows", "amd64", false, language);
   try {
-    assert.match((await denied.plugin.home()).subtitle, /allow Mini Player|允许运行程序/);
+    const home = await denied.plugin.home();
+    assert.match(home.subtitle, /Allow Programs|允许启动程序/);
+    assert.equal(home.sections[0].empty, home.subtitle);
     await assert.rejects(denied.plugin.account(), { code: "setup" });
     await denied.save("guardMode", "true");
     assert.equal(denied.requests.length, 0);
@@ -184,7 +200,8 @@ for (const language of Object.keys(locales)) {
     assert.equal(await mac.plugin.account(), null);
     const home = await mac.plugin.home();
     assert.match(home.subtitle, /Notch Player.*macOS 15\.4\+/);
-    assert.equal((await mac.plugin.browse({ page: "show" })).subtitle, home.subtitle);
+    assert.equal(home.sections[0].empty, home.subtitle);
+    assert.equal((await mac.plugin.browse({ page: "show/1" })).subtitle, home.subtitle);
     await mac.save("guardMode", "true");
     assert.equal(mac.launches.length, 0);
     assert.equal(mac.requests.length, 0);

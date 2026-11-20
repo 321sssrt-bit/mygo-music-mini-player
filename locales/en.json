@@ -7,7 +7,7 @@
   "Show Mini Player now": "Show Mini Player now",
   "Hide Mini Player": "Hide Mini Player",
   "Reset position to screen center": "Reset position to screen center",
-  "In Settings → Plugins, allow Mini Player to run programs.": "In Settings → Plugins, allow Mini Player to run programs.",
+  "In Settings → Plugins, choose Allow Programs for Mini Player.": "In Settings → Plugins, choose Allow Programs for Mini Player.",
   "Mini Player could not start. Check that the plugin package matches your platform.": "Mini Player could not start. Check that the plugin package matches your platform.",
   "Mini Player could not complete the action.": "Mini Player could not complete the action.",
   "Mini Player is unavailable on macOS. MyGo Music already includes the Notch Player, and macOS 15.4+ restricts third-party access to system media sessions.": "Mini Player is unavailable on macOS. MyGo Music already includes the Notch Player, and macOS 15.4+ restricts third-party access to system media sessions.",

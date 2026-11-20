@@ -7,7 +7,7 @@
   "Show Mini Player now": "立即显示迷你悬浮窗",
   "Hide Mini Player": "隐藏迷你悬浮窗",
   "Reset position to screen center": "重置位置回屏幕中央",
-  "In Settings → Plugins, allow Mini Player to run programs.": "请在「设置 → 插件」中为迷你悬浮窗开启「允许运行程序」。",
+  "In Settings → Plugins, choose Allow Programs for Mini Player.": "请在「设置 → 插件」中为迷你悬浮窗点击「允许启动程序」。",
   "Mini Player could not start. Check that the plugin package matches your platform.": "迷你悬浮窗未能启动。请检查插件包是否适用于当前平台。",
   "Mini Player could not complete the action.": "迷你悬浮窗未能完成此操作。",
   "Mini Player is unavailable on macOS. MyGo Music already includes the Notch Player, and macOS 15.4+ restricts third-party access to system media sessions.": "macOS 暂不支持迷你悬浮窗。MyGo Music 已内置顶部 Notch Player，且 macOS 15.4+ 限制第三方进程读取系统媒体会话。",
