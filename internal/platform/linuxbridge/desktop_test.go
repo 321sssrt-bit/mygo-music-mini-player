@@ -54,17 +54,22 @@ func TestHotkeyReplacement(t *testing.T) {
 	unregister := func(combo string) { delete(active, combo) }
 	var h hotkey
 	presses := 0
-	if err := h.replace("Ctrl+M", func() { presses++ }, register, unregister); err != nil {
+	if err := h.replace("Ctrl+Shift+M", func() { presses++ }, register, unregister); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.replace("Ctrl+N", func() { presses += 100 }, register, unregister); !errors.Is(err, conflict) {
 		t.Fatalf("conflicting binding = %v", err)
 	}
-	active["Ctrl+M"]()
-	if err := h.replace("ctrl+m", func() { presses += 2 }, register, unregister); err != nil {
-		t.Fatal(err)
+	active["Ctrl+Shift+M"]()
+	for _, alias := range []string{"ctrl+shift+m", "Shift + Control + M", "Shift+CmdOrCtrl+M"} {
+		if err := h.replace(alias, func() { presses += 2 }, register, unregister); err != nil {
+			t.Fatal(err)
+		}
+		if active["Ctrl+Shift+M"] == nil || len(active) != 1 {
+			t.Fatalf("alias %q changed the native binding", alias)
+		}
 	}
-	active["Ctrl+M"]()
+	active["Ctrl+Shift+M"]()
 	if err := h.replace("Ctrl+B", func() { presses += 4 }, register, unregister); err != nil {
 		t.Fatal(err)
 	}
@@ -74,5 +79,19 @@ func TestHotkeyReplacement(t *testing.T) {
 	}
 	if err := h.replace("", nil, register, unregister); err != nil || len(active) != 0 {
 		t.Fatalf("failed to clear binding: %v (%d active)", err, len(active))
+	}
+}
+
+func TestWakeOnlyRunningHost(t *testing.T) {
+	alive := false
+	opened := ""
+	running := func() (bool, error) { return alive, nil }
+	openURL := func(uri string) error { opened = uri; return nil }
+	if err := openRunningHost(running, openURL); !errors.Is(err, bridge.ErrUnavailable) || opened != "" {
+		t.Fatalf("stopped host: err=%v, URL=%q", err, opened)
+	}
+	alive = true
+	if err := openRunningHost(running, openURL); err != nil || opened != "mygo-music://" {
+		t.Fatalf("running host: err=%v, URL=%q", err, opened)
 	}
 }

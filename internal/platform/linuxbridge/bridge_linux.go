@@ -49,18 +49,26 @@ func New(pluginDataDir string) (*Adapter, error) {
 }
 
 func (a *Adapter) ObserveHost() (bridge.HostState, error) {
+	running, err := hostRunning()
+	if err != nil || !running {
+		return bridge.HostState{}, err
+	}
+	_, state := inspectWindow()
+	return bridge.HostState{Running: true, Window: state}, nil
+}
+
+func hostRunning() (bool, error) {
 	procs, err := os.ReadDir("/proc")
 	if err != nil {
-		return bridge.HostState{}, err
+		return false, err
 	}
 	for _, proc := range procs {
 		pid, err := strconv.ParseUint(proc.Name(), 10, 32)
 		if err == nil && isHostProcess(uint32(pid)) {
-			_, state := inspectWindow()
-			return bridge.HostState{Running: true, Window: state}, nil
+			return true, nil
 		}
 	}
-	return bridge.HostState{}, nil
+	return false, nil
 }
 
 func isHostProcess(pid uint32) bool {
@@ -126,26 +134,26 @@ func (a *Adapter) WakeMainWindow() error {
 		}
 	}
 	cancel()
-	if mygo.App.IsReady() {
-		if err := mygo.Shell.OpenExternal(hostSlug + "://"); err != nil {
+	return openRunningHost(hostRunning, func(uri string) error {
+		if err := openHostURL(uri); err != nil {
 			return errors.Join(activateErr, raiseErr, err)
 		}
 		return nil
+	})
+}
+
+func openHostURL(uri string) error {
+	if mygo.App.IsReady() {
+		return mygo.Shell.OpenExternal(uri)
 	}
-	ctx, cancel = context.WithTimeout(context.Background(), operationTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
 	defer cancel()
-	if _, err := command(ctx, "gio", "open", hostSlug+"://"); err != nil {
-		return errors.Join(activateErr, raiseErr, err)
-	}
-	return nil
+	_, err := command(ctx, "gio", "open", uri)
+	return err
 }
 
 func hostMedia(ctx context.Context) (mediaBus, string, error) {
-	// The companion can use an existing session but must not launch a D-Bus daemon.
-	if address := os.Getenv("DBUS_SESSION_BUS_ADDRESS"); address == "" || address == "autolaunch:" {
-		return nil, "", bridge.ErrUnavailable
-	}
-	conn, err := dbus.SessionBus()
+	conn, err := sessionBus(ctx)
 	if err != nil {
 		return nil, "", err
 	}
@@ -158,6 +166,26 @@ func hostMedia(ctx context.Context) (mediaBus, string, error) {
 	}
 	owner, err := mediaOwner(bus, isHostProcess)
 	return bus, owner, err
+}
+
+func sessionBus(ctx context.Context) (*dbus.Conn, error) {
+	if address := os.Getenv("DBUS_SESSION_BUS_ADDRESS"); address != "" && address != "autolaunch:" {
+		return dbus.SessionBus()
+	}
+	// Discover an existing user-bus socket without spawning dbus-launch.
+	conn, err := dbus.SessionBusPrivateNoAutoStartup(dbus.WithContext(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", bridge.ErrUnavailable, err)
+	}
+	if err := conn.Auth(nil); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if err := conn.Hello(); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return conn, nil
 }
 
 func (a *Adapter) Media() (bridge.MediaSnapshot, error) {
@@ -245,21 +273,11 @@ func (a *Adapter) SetLoginStartup(argv []string) error {
 }
 
 func (a *Adapter) Settings() (bridge.SettingsSnapshot, error) {
-	language := "en"
-	for _, locale := range mygo.App.PreferredLanguages() {
-		base, _, _ := strings.Cut(locale, "-")
-		if base == "zh" {
-			language = "zh-CN"
-			break
-		}
-		if base == "en" {
-			break
-		}
+	if !mygo.App.IsReady() {
+		return readSettings(a.configDir, a.pluginDir, hostLanguage(environmentLocales(os.Getenv)))
 	}
-	snapshot, err := readSettings(a.configDir, a.pluginDir, language)
-	if mygo.App.IsReady() {
-		snapshot.Host.ReduceMotion = mygo.Theme.Preferences().ReduceMotion
-	}
+	snapshot, err := readSettings(a.configDir, a.pluginDir, hostLanguage(mygo.App.PreferredLanguages()))
+	snapshot.Host.ReduceMotion = mygo.Theme.Preferences().ReduceMotion
 	return snapshot, err
 }
 

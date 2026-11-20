@@ -10,6 +10,18 @@ import (
 	"github.com/321sssrt-bit/mygo-music-mini-player/internal/bridge"
 )
 
+func TestLanguageBeforeMyGoReady(t *testing.T) {
+	env := map[string]string{"LC_MESSAGES": "zh_CN.UTF-8", "LANG": "en_US.UTF-8"}
+	getenv := func(key string) string { return env[key] }
+	if got := hostLanguage(environmentLocales(getenv)); got != "zh-CN" {
+		t.Fatalf("LC_MESSAGES language = %s", got)
+	}
+	env["LANGUAGE"] = "fr_FR:en_GB:zh_CN"
+	if got := hostLanguage(environmentLocales(getenv)); got != "en" {
+		t.Fatalf("LANGUAGE priority = %s", got)
+	}
+}
+
 func TestXDGAutostart(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "autostart", startupFile)

@@ -14,6 +14,31 @@ import (
 
 const startupFile = "dev.egoist.music.miniplayer.desktop"
 
+func environmentLocales(getenv func(string) string) []string {
+	locales := strings.Split(getenv("LANGUAGE"), ":")
+	for _, name := range []string{"LC_ALL", "LC_MESSAGES", "LANG"} {
+		if locale := getenv(name); locale != "" {
+			return append(locales, locale)
+		}
+	}
+	return locales
+}
+
+func hostLanguage(locales []string) string {
+	for _, locale := range locales {
+		if i := strings.IndexAny(locale, "-_.@"); i >= 0 {
+			locale = locale[:i]
+		}
+		switch strings.ToLower(locale) {
+		case "zh":
+			return "zh-CN"
+		case "en":
+			return "en"
+		}
+	}
+	return "en"
+}
+
 func desktopEntry(argv []string) (string, error) {
 	if len(argv) == 0 || argv[0] == "" || strings.Contains(argv[0], "=") {
 		return "", errors.New("invalid autostart executable")

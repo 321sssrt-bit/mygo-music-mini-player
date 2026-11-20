@@ -2,6 +2,7 @@ package linuxbridge
 
 import (
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -9,6 +10,17 @@ import (
 
 	"github.com/321sssrt-bit/mygo-music-mini-player/internal/bridge"
 )
+
+func openRunningHost(running func() (bool, error), openURL func(string) error) error {
+	alive, err := running()
+	if err != nil {
+		return err
+	}
+	if !alive {
+		return bridge.ErrUnavailable
+	}
+	return openURL(hostSlug + "://")
+}
 
 var (
 	errMissingCallback = errors.New("global shortcut requires a callback")
@@ -93,7 +105,7 @@ func (h *hotkey) replace(combo string, onPress func(), register func(string, fun
 		return errHotkeyBusy
 	}
 	defer h.mu.Unlock()
-	if strings.EqualFold(h.combo, combo) {
+	if hotkeyIdentity(h.combo) == hotkeyIdentity(combo) {
 		if combo != "" {
 			h.onPress.Store(&onPress)
 		}
@@ -112,4 +124,44 @@ func (h *hotkey) replace(combo string, onPress func(), register func(string, fun
 	}
 	h.combo, h.onPress = combo, callback
 	return nil
+}
+
+// shortcut: MyGo's accelerator parser is internal; drop this equality check when it exposes canonicalization.
+func hotkeyIdentity(combo string) string {
+	if combo == "+" {
+		return "plus"
+	}
+	plusKey := strings.HasSuffix(combo, "++")
+	if plusKey {
+		combo = strings.TrimSuffix(combo, "+")
+	}
+	parts := strings.Split(strings.ToLower(combo), "+")
+	mods, key := parts[:len(parts)-1], strings.TrimSpace(parts[len(parts)-1])
+	for i, mod := range mods {
+		mod = strings.TrimSpace(mod)
+		switch mod {
+		case "command", "cmd", "meta", "win":
+			mod = "super"
+		case "commandorcontrol", "cmdorctrl", "control":
+			mod = "ctrl"
+		case "option", "altgr":
+			mod = "alt"
+		}
+		mods[i] = mod
+	}
+	slices.Sort(mods)
+	switch key {
+	case "del":
+		key = "delete"
+	case "ins":
+		key = "insert"
+	case "return":
+		key = "enter"
+	case "esc":
+		key = "escape"
+	}
+	if plusKey {
+		key = "plus"
+	}
+	return strings.Join(append(slices.Compact(mods), key), "+")
 }

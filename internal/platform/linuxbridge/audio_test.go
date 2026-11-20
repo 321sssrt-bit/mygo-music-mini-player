@@ -9,7 +9,7 @@ import (
 )
 
 func TestPulseStream(t *testing.T) {
-	mygo := `{"index":0,"properties":{"application.process.id":"42","application.process.binary":"mygo-music"},
+	mygo := `{"index":0,"properties":{"application.process.id":"42","application.process.binary":"mygo-music (deleted)"},
 		"volume":{"front-left":{"value":32768},"front-right":{"value":65536}}}`
 	browser := `{"index":9,"properties":{"application.process.id":"42","application.process.binary":"firefox"}}`
 	stale := `{"index":3,"properties":{"application.process.id":"900","application.process.binary":"mygo-music"}}`

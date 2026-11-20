@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 
 	"github.com/321sssrt-bit/mygo-music-mini-player/internal/bridge"
 )
@@ -28,7 +29,7 @@ func matchStream(data []byte, isHost func(uint32) bool) (pulseStream, error) {
 		if err != nil || pid == 0 || stream.Index == nil {
 			continue
 		}
-		if stream.Properties["application.process.binary"] != hostSlug {
+		if strings.TrimSuffix(stream.Properties["application.process.binary"], " (deleted)") != hostSlug {
 			continue
 		}
 		if !isHost(uint32(pid)) {
