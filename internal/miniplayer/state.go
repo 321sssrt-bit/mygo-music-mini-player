@@ -215,7 +215,6 @@ func localizedStrings(lang, locale string) copyStrings {
 }
 
 type surfacePalette struct {
-	dark          bool
 	cardTop       ui.Color
 	cardBottom    ui.Color
 	cardGlow      ui.Color
@@ -270,7 +269,6 @@ func buildPalette(dark, highContrast bool, dominant ui.Color, hasDominant bool) 
 			artistAlpha = 0.80
 		}
 		return surfacePalette{
-			dark:          true,
 			cardTop:       cardTop,
 			cardBottom:    cardBottom,
 			cardGlow:      cardGlow,
@@ -323,7 +321,6 @@ func buildPalette(dark, highContrast bool, dominant ui.Color, hasDominant bool) 
 		artistAlpha = 0.78
 	}
 	return surfacePalette{
-		dark:          false,
 		cardTop:       cardTop,
 		cardBottom:    cardBottom,
 		cardGlow:      cardGlow,
