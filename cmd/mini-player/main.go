@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"os"
 	"runtime"
 
 	"github.com/321sssrt-bit/mygo-music-mini-player/internal/miniplayer"
@@ -17,6 +18,13 @@ func main() {
 		return
 	default:
 		log.Print("Mini Player supports Windows and Linux.")
+		return
+	}
+
+	if len(os.Args) > 1 && os.Args[1] == "render-frame" {
+		if err := renderFrame(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
 		return
 	}
 
