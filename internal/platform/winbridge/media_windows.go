@@ -110,25 +110,26 @@ func stringProperty(obj *comObject, slot int) (string, error) {
 	return string(syscall.UTF16ToString(unsafe.Slice(buf, size))), nil
 }
 
-func isHostSession(id string, pids map[uint32]string) bool {
-	// The unpackaged MyGo Music release advertises its executable basename.
-	if strings.EqualFold(id, hostExe) {
-		return len(pids) == 1
-	}
+func isHostSession(id, installedImage string, pids map[uint32]string) bool {
 	for _, image := range pids {
-		if strings.EqualFold(id, image) {
-			return true
+		if strings.EqualFold(image, installedImage) {
+			// The unpackaged release normally exposes only the basename.
+			return strings.EqualFold(id, image) || len(pids) == 1 && strings.EqualFold(id, hostExe)
 		}
 	}
 	return false
 }
 
 func withMediaSession(use func(*comObject) error) error {
+	image := registeredHostImage()
+	if image == "" {
+		return bridge.ErrUnavailable
+	}
 	pids, err := hostProcesses()
 	if err != nil {
 		return err
 	}
-	if len(pids) == 0 {
+	if !hasHostProcess(image, pids) {
 		return bridge.ErrUnavailable
 	}
 	return inApartment(true, func() error {
@@ -142,11 +143,11 @@ func withMediaSession(use func(*comObject) error) error {
 			return err
 		}
 		defer sessions.release()
-		return useHostSession(sessions, pids, use)
+		return useHostSession(sessions, image, pids, use)
 	})
 }
 
-func useHostSession(sessions *comObject, pids map[uint32]string, use func(*comObject) error) error {
+func useHostSession(sessions *comObject, image string, pids map[uint32]string, use func(*comObject) error) error {
 	var size uint32
 	if err := checkHR(sessions.call(7, uintptr(unsafe.Pointer(&size)))); err != nil {
 		return err
@@ -163,13 +164,13 @@ func useHostSession(sessions *comObject, pids map[uint32]string, use func(*comOb
 			return err
 		}
 		id, err := stringProperty(session, 6) // SourceAppUserModelId
-		if err != nil || !isHostSession(id, pids) {
+		if err != nil || !isHostSession(id, image, pids) {
 			session.release()
 			continue
 		}
 		if selected != nil {
 			session.release()
-			return fmt.Errorf("multiple MyGo Music media sessions: %w", bridge.ErrUnavailable)
+			return bridge.ErrUnavailable
 		}
 		selected = session
 	}
@@ -219,9 +220,10 @@ func readMediaSnapshot(session *comObject, snapshot *bridge.MediaSnapshot) error
 		return err
 	}
 	if props != nil {
-		snapshot.Artwork, err = mediaArtwork(props)
+		// A vanished or unreadable thumbnail can use the companion's artwork fallback.
+		snapshot.Artwork, _ = mediaArtwork(props)
 	}
-	return err
+	return nil
 }
 
 func readTimeline(session *comObject, snapshot *bridge.MediaSnapshot) error {
@@ -298,13 +300,20 @@ func mediaArtwork(props *comObject) ([]byte, error) {
 		return nil, err
 	}
 	defer stream.release()
+	return readStream(stream, int(size))
+}
+
+func readStream(stream *comObject, size int) ([]byte, error) {
 	buf := make([]byte, size)
-	var read uint32
-	if err := checkHR(stream.call(3, uintptr(unsafe.Pointer(&buf[0])), uintptr(size), uintptr(unsafe.Pointer(&read)))); err != nil {
-		return nil, err
-	}
-	if uint64(read) != size {
-		return nil, io.ErrUnexpectedEOF
+	for remaining := buf; len(remaining) > 0; {
+		var n uint32
+		if err := checkHR(stream.call(3, uintptr(unsafe.Pointer(&remaining[0])), uintptr(len(remaining)), uintptr(unsafe.Pointer(&n)))); err != nil {
+			return nil, err
+		}
+		if n == 0 || int(n) > len(remaining) {
+			return nil, io.ErrUnexpectedEOF
+		}
+		remaining = remaining[n:]
 	}
 	return buf, nil
 }

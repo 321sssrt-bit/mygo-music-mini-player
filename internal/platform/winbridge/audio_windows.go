@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -32,9 +32,16 @@ const (
 )
 
 func audioSessions(use func(*comObject, int32) error) error {
-	localSession, err := processSession(uint32(os.Getpid()))
+	image := registeredHostImage()
+	if image == "" {
+		return nil
+	}
+	pids, err := hostProcesses()
 	if err != nil {
 		return err
+	}
+	if !hasHostProcess(image, pids) {
+		return nil
 	}
 	return inApartment(false, func() error {
 		var enumerator *comObject
@@ -55,17 +62,36 @@ func audioSessions(use func(*comObject, int32) error) error {
 		if err := checkHR(devices.call(3, uintptr(unsafe.Pointer(&count)))); err != nil {
 			return err
 		}
-		var result error
-		for i := uint32(0); i < count; i++ {
-			if err := deviceSessions(devices, i, localSession, use); err != nil {
-				result = errors.Join(result, err)
-			}
-		}
-		return result
+		return scanAudioDevices(count, func(i uint32, visit func(*comObject)) error {
+			return deviceSessions(devices, i, visit)
+		}, func(session *comObject) (bool, error) {
+			return useHostAudioSession(session, func(pid uint32) bool { return strings.EqualFold(pids[pid], image) }, use)
+		})
 	})
 }
 
-func deviceSessions(devices *comObject, index, localSession uint32, use func(*comObject, int32) error) error {
+func scanAudioDevices(count uint32, open func(uint32, func(*comObject)) error, visit func(*comObject) (bool, error)) error {
+	var discoveryErr, hostErr error
+	var found bool
+	for i := uint32(0); i < count; i++ {
+		err := open(i, func(session *comObject) {
+			match, err := visit(session)
+			if match {
+				found = true
+				hostErr = errors.Join(hostErr, err)
+			} else {
+				discoveryErr = errors.Join(discoveryErr, err)
+			}
+		})
+		discoveryErr = errors.Join(discoveryErr, err)
+	}
+	if found {
+		return hostErr
+	}
+	return discoveryErr
+}
+
+func deviceSessions(devices *comObject, index uint32, visit func(*comObject)) error {
 	device, err := devices.object(4, uintptr(index)) // IMMDeviceCollection.Item
 	if err != nil {
 		return err
@@ -89,7 +115,7 @@ func deviceSessions(devices *comObject, index, localSession uint32, use func(*co
 	for i := int32(0); i < count; i++ {
 		session, err := sessions.object(4, uintptr(i))
 		if err == nil {
-			err = useHostAudioSession(session, localSession, hostImage, use)
+			visit(session)
 			session.release()
 		}
 		if err != nil {
@@ -99,25 +125,25 @@ func deviceSessions(devices *comObject, index, localSession uint32, use func(*co
 	return result
 }
 
-func useHostAudioSession(session *comObject, localSession uint32, lookup func(uint32, uint32) string, use func(*comObject, int32) error) error {
+func useHostAudioSession(session *comObject, isHostPID func(uint32) bool, use func(*comObject, int32) error) (bool, error) {
 	control, err := session.query(&iidSessionCtrl2)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer control.release()
 	var pid uint32
 	// A positive GetProcessId HRESULT denotes a session shared across processes.
-	if ret := control.call(14, uintptr(unsafe.Pointer(&pid))); ret != 0 || lookup(pid, localSession) == "" {
-		return nil
+	if ret := control.call(14, uintptr(unsafe.Pointer(&pid))); ret != 0 || !isHostPID(pid) {
+		return false, nil
 	}
 	var state int32
 	if err := checkHR(control.call(3, uintptr(unsafe.Pointer(&state)))); err != nil {
-		return err
+		return true, err
 	}
 	if state != sessionInactive && state != sessionActive {
-		return nil
+		return false, nil
 	}
-	return use(control, state)
+	return true, use(control, state)
 }
 
 func (b *Bridge) Volume() (float64, error) {
@@ -158,7 +184,6 @@ func (b *Bridge) SetVolume(level float64) error {
 	}
 	b.audioMu.Lock()
 	defer b.audioMu.Unlock()
-	b.peakAt = time.Time{}
 	found := false
 	err := audioSessions(func(control *comObject, _ int32) error {
 		volume, err := control.query(&iidSimpleVolume)

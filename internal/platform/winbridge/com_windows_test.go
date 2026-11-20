@@ -75,21 +75,23 @@ func TestMediaSessionSelection(t *testing.T) {
 		}
 		return nil
 	}
-	if err := useHostSession(vector, pids, use); err != nil || calls != 1 {
+	if err := useHostSession(vector, path, pids, use); err != nil || calls != 1 {
 		t.Fatalf("selected=%d, err=%v", calls, err)
 	}
 	items = append(items, host)
-	if err := useHostSession(vector, pids, use); !errors.Is(err, bridge.ErrUnavailable) || calls != 1 {
+	if err := useHostSession(vector, path, pids, use); !errors.Is(err, bridge.ErrUnavailable) || calls != 1 {
 		t.Fatalf("ambiguous sessions invoked command: selected=%d, err=%v", calls, err)
 	}
 	items = items[:2]
-	if err := useHostSession(vector, pids, use); !errors.Is(err, bridge.ErrUnavailable) || calls != 1 {
+	if err := useHostSession(vector, path, pids, use); !errors.Is(err, bridge.ErrUnavailable) || calls != 1 {
 		t.Fatalf("third-party sessions invoked command: selected=%d, err=%v", calls, err)
 	}
-	if isHostSession("MyGo Music.exe", nil) ||
-		isHostSession("MyGo Music.exe", map[uint32]string{13: path, 19: `C:\other\MyGo Music.exe`}) ||
-		isHostSession(`C:\other\MyGo Music.exe`, pids) ||
-		!isHostSession(`c:\program files\mygo music\mygo music.exe`, pids) {
+	const unrelated = `C:\other\MyGo Music.exe`
+	if isHostSession("MyGo Music.exe", path, nil) ||
+		isHostSession("MyGo Music.exe", path, map[uint32]string{19: unrelated}) ||
+		isHostSession("MyGo Music.exe", path, map[uint32]string{13: path, 19: unrelated}) ||
+		isHostSession(unrelated, path, map[uint32]string{13: path, 19: unrelated}) ||
+		!isHostSession(`c:\program files\mygo music\mygo music.exe`, path, map[uint32]string{13: path, 19: unrelated}) {
 		t.Fatal("session identity was matched without an unambiguous process or exact path")
 	}
 	t.Log("ignored browser/partial identities and ambiguous sessions; selected one verified host")
@@ -192,8 +194,25 @@ func TestSMTCArtworkReadFromStream(t *testing.T) {
 	}
 }
 
+func TestShortArtworkReads(t *testing.T) {
+	remaining := []byte("artwork")
+	stream := stubObject(map[int]any{
+		3: func(_ uintptr, dst *byte, request uintptr, read *uint32) uintptr {
+			n := min(2, len(remaining), int(request))
+			copy(unsafe.Slice(dst, n), remaining[:n])
+			remaining = remaining[n:]
+			*read = uint32(n)
+			return 0
+		},
+	})
+	got, err := readStream(stream, 7)
+	if err != nil || string(got) != "artwork" {
+		t.Fatalf("short reads returned %q, %v", got, err)
+	}
+	t.Logf("IStream returned 2, 2, 2 and 1 bytes; combined artwork is %q", got)
+}
+
 func TestAudioSessionProcessIsolation(t *testing.T) {
-	const localSession = 2
 	var pid uint32 = 300
 	var state int32 = sessionActive
 	var status uintptr
@@ -210,12 +229,7 @@ func TestAudioSessionProcessIsolation(t *testing.T) {
 			return 0
 		},
 	})
-	lookup := func(pid, desktopSession uint32) string {
-		if pid == 300 && desktopSession == localSession {
-			return hostExe
-		}
-		return ""
-	}
+	isHostPID := func(pid uint32) bool { return pid == 300 }
 	var calls int
 	visit := func(_ *comObject, state int32) error {
 		calls++
@@ -226,7 +240,7 @@ func TestAudioSessionProcessIsolation(t *testing.T) {
 	}
 	run := func() {
 		t.Helper()
-		if err := useHostAudioSession(session, localSession, lookup, visit); err != nil {
+		if _, err := useHostAudioSession(session, isHostPID, visit); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -242,4 +256,31 @@ func TestAudioSessionProcessIsolation(t *testing.T) {
 		t.Fatalf("audio visits = %d, want 1", calls)
 	}
 	t.Log("only active host PID 300 visited; foreign, cross-process and expired sessions ignored")
+}
+
+func TestUnrelatedAudioDeviceFailure(t *testing.T) {
+	disconnect := errors.New("output disconnected")
+	hostFailure := errors.New("host volume write failed")
+	open := func(index uint32, visit func(*comObject)) error {
+		if index == 0 {
+			return disconnect
+		}
+		visit(nil)
+		return nil
+	}
+	for _, tc := range []struct {
+		host bool
+		err  error
+		want error
+	}{
+		{host: true},
+		{host: true, err: hostFailure, want: hostFailure},
+		{want: disconnect},
+	} {
+		err := scanAudioDevices(2, open, func(*comObject) (bool, error) { return tc.host, tc.err })
+		if !errors.Is(err, tc.want) {
+			t.Fatalf("host=%t error=%v, want %v", tc.host, err, tc.want)
+		}
+	}
+	t.Log("failed unrelated endpoint did not mask successful host operation or host-specific error")
 }

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/321sssrt-bit/mygo-music-mini-player/internal/bridge"
@@ -34,11 +35,44 @@ var (
 	showWindowAsync       = user32.NewProc("ShowWindowAsync")
 	setForegroundWindow   = user32.NewProc("SetForegroundWindow")
 	shellExecute          = syscall.NewLazyDLL("shell32.dll").NewProc("ShellExecuteW")
+	assocQueryString      = syscall.NewLazyDLL("shlwapi.dll").NewProc("AssocQueryStringW")
 	dwmapi                = syscall.NewLazyDLL("dwmapi.dll")
 	dwmGetAttribute       = dwmapi.NewProc("DwmGetWindowAttribute")
 	dwmSetAttribute       = dwmapi.NewProc("DwmSetWindowAttribute")
 	rtlGetVersion         = syscall.NewLazyDLL("ntdll.dll").NewProc("RtlGetVersion")
 )
+
+func registeredHostImage() string {
+	const flags = 0x1000 | 0x100 // ASSOCF_IS_PROTOCOL | ASSOCF_NOFIXUPS
+	const executable = 2         // ASSOCSTR_EXECUTABLE
+	scheme, _ := syscall.UTF16PtrFromString("mygo-music")
+	verb, _ := syscall.UTF16PtrFromString("open")
+	var size uint32
+	ret, _, _ := assocQueryString.Call(flags, executable, uintptr(unsafe.Pointer(scheme)), uintptr(unsafe.Pointer(verb)), 0, uintptr(unsafe.Pointer(&size)))
+	if checkHR(ret) != nil || size == 0 || size > 32768 {
+		return ""
+	}
+	buffer := make([]uint16, size)
+	ret, _, _ = assocQueryString.Call(flags, executable, uintptr(unsafe.Pointer(scheme)), uintptr(unsafe.Pointer(verb)),
+		uintptr(unsafe.Pointer(&buffer[0])), uintptr(unsafe.Pointer(&size)))
+	if ret != 0 {
+		return ""
+	}
+	image := filepath.Clean(syscall.UTF16ToString(buffer))
+	if !filepath.IsAbs(image) || !strings.EqualFold(filepath.Base(image), hostExe) {
+		return ""
+	}
+	return image
+}
+
+func hasHostProcess(installedImage string, pids map[uint32]string) bool {
+	for _, image := range pids {
+		if strings.EqualFold(image, installedImage) {
+			return true
+		}
+	}
+	return false
+}
 
 func processSession(pid uint32) (uint32, error) {
 	var session uint32
@@ -113,15 +147,17 @@ func isHostMainWindow(class, title string, owner uintptr) bool {
 }
 
 type windowSearch struct {
-	pids  map[uint32]string
-	hwnd  uintptr
-	state bridge.WindowState
+	pids           map[uint32]string
+	installedImage string
+	hwnd           uintptr
+	state          bridge.WindowState
 }
 
 var enumHostWindow = syscall.NewCallback(func(hwnd uintptr, search *windowSearch) uintptr {
 	var pid uint32
 	windowPID.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
-	if search.pids[pid] == "" {
+	image := search.pids[pid]
+	if image == "" || search.installedImage != "" && !strings.EqualFold(image, search.installedImage) {
 		return 1
 	}
 	owner, _, _ := getWindow.Call(hwnd, 4) // GW_OWNER
@@ -145,37 +181,84 @@ var enumHostWindow = syscall.NewCallback(func(hwnd uintptr, search *windowSearch
 	return 1
 })
 
-func findHostWindow() (bridge.HostState, uintptr, error) {
+func findHostWindow(installedImage string) (bridge.HostState, uintptr, error) {
 	pids, err := hostProcesses()
 	if err != nil || len(pids) == 0 {
 		return bridge.HostState{}, 0, err
 	}
-	search := windowSearch{pids: pids}
+	installedRunning := hasHostProcess(installedImage, pids)
+	if !installedRunning {
+		installedImage = ""
+	}
+	search := windowSearch{pids: pids, installedImage: installedImage}
 	ret, _, err := enumWindows.Call(enumHostWindow, uintptr(unsafe.Pointer(&search)))
 	if ret == 0 {
-		return bridge.HostState{Running: true}, 0, err
+		return bridge.HostState{Running: installedRunning}, 0, err
 	}
-	return bridge.HostState{Running: true, Window: search.state}, search.hwnd, nil
+	return bridge.HostState{Running: installedRunning || search.hwnd != 0, Window: search.state}, search.hwnd, nil
 }
 
 func (*Bridge) ObserveHost() (bridge.HostState, error) {
-	state, _, err := findHostWindow()
+	state, _, err := findHostWindow(registeredHostImage())
 	return state, err
 }
 
 func (*Bridge) WakeMainWindow() error {
-	state, hwnd, _ := findHostWindow()
-	if hwnd != 0 {
-		switch state.Window {
-		case bridge.WindowMinimized:
-			showWindowAsync.Call(hwnd, 9) // SW_RESTORE
-		case bridge.WindowHidden:
-			showWindowAsync.Call(hwnd, 5) // SW_SHOW
+	image := registeredHostImage()
+	state, hwnd, err := findHostWindow(image)
+	if err != nil {
+		return fmt.Errorf("find MyGo Music window: %w", err)
+	}
+	return wakeHostWindow(state, hwnd, foregroundHostWindow, func() error {
+		pids, err := hostProcesses()
+		if err != nil {
+			return err
 		}
-		if ok, _, _ := setForegroundWindow.Call(hwnd); ok != 0 {
-			return nil
+		if image == "" || !hasHostProcess(image, pids) || !strings.EqualFold(image, registeredHostImage()) {
+			return bridge.ErrUnavailable
+		}
+		return openHostProtocol()
+	})
+}
+
+func wakeHostWindow(state bridge.HostState, hwnd uintptr, activate func(uintptr, bridge.WindowState) bool, protocol func() error) error {
+	if !state.Running {
+		return bridge.ErrUnavailable
+	}
+	if hwnd != 0 && activate(hwnd, state.Window) {
+		return nil
+	}
+	return protocol()
+}
+
+func foregroundHostWindow(hwnd uintptr, state bridge.WindowState) bool {
+	if state == bridge.WindowHidden || state == bridge.WindowMinimized {
+		command := uintptr(5) // SW_SHOW
+		if state == bridge.WindowMinimized {
+			command = 9 // SW_RESTORE
+		}
+		if ok, _, _ := showWindowAsync.Call(hwnd, command); ok == 0 {
+			return false
+		}
+		// The host window's thread must process its asynchronous restore first.
+		deadline := time.Now().Add(200 * time.Millisecond)
+		for {
+			shown, _, _ := isWindowVisible.Call(hwnd)
+			minimized, _, _ := isIconic.Call(hwnd)
+			if shown != 0 && minimized == 0 {
+				break
+			}
+			if !time.Now().Before(deadline) {
+				return false
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
 	}
+	ok, _, _ := setForegroundWindow.Call(hwnd)
+	return ok != 0
+}
+
+func openHostProtocol() error {
 	verb, _ := syscall.UTF16PtrFromString("open")
 	uri, _ := syscall.UTF16PtrFromString("mygo-music://")
 	ret, _, _ := shellExecute.Call(0, uintptr(unsafe.Pointer(verb)), uintptr(unsafe.Pointer(uri)), 0, 0, 1)

@@ -125,6 +125,29 @@ func TestWindowIdentity(t *testing.T) {
 	}
 }
 
+func TestHostWakePolicy(t *testing.T) {
+	var activated, fallback int
+	activate := func(uintptr, bridge.WindowState) bool {
+		activated++
+		return activated == 1
+	}
+	protocol := func() error { fallback++; return nil }
+	if err := wakeHostWindow(bridge.HostState{}, 0, activate, protocol); !errors.Is(err, bridge.ErrUnavailable) {
+		t.Fatalf("wake stopped host: %v", err)
+	}
+	if activated != 0 || fallback != 0 {
+		t.Fatal("wake attempted to start a stopped host")
+	}
+	state := bridge.HostState{Running: true, Window: bridge.WindowMinimized}
+	if err := wakeHostWindow(state, 1, activate, protocol); err != nil || activated != 1 || fallback != 0 {
+		t.Fatalf("native wake: activate=%d, protocol=%d, error=%v", activated, fallback, err)
+	}
+	if err := wakeHostWindow(state, 1, activate, protocol); err != nil || activated != 2 || fallback != 1 {
+		t.Fatalf("fallback wake: activate=%d, protocol=%d, error=%v", activated, fallback, err)
+	}
+	t.Log("stopped host: 0 launches; native success: 0 protocol calls; native failure: 1 protocol call")
+}
+
 func TestDWMDecorations(t *testing.T) {
 	class, _ := syscall.UTF16PtrFromString("STATIC")
 	create := user32.NewProc("CreateWindowExW")
