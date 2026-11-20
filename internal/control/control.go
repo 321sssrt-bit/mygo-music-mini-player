@@ -58,7 +58,7 @@ type Server struct {
 // file contains the HTTP base URL (address), Bearer token and current status.
 // handle runs on HTTP goroutines and must finish the action (and Publish any
 // resulting status change) before returning. It should honor request cancellation.
-func Start(dataDir string, initial Status, handle func(context.Context, Action) error) (*Server, error) {
+func Start(dataDir string, initial Status, handle func(context.Context, *Server, Action) error) (*Server, error) {
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return nil, err
 	}
@@ -73,8 +73,7 @@ func Start(dataDir string, initial Status, handle func(context.Context, Action) 
 	}
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
-		lock.Close()
-		return nil, err
+		return nil, errors.Join(err, releaseLock(lock))
 	}
 	s := &Server{
 		lock:    lock,
@@ -89,7 +88,7 @@ func Start(dataDir string, initial Status, handle func(context.Context, Action) 
 	})
 	for _, action := range []Action{Show, Hide, ResetPosition, Refresh} {
 		mux.HandleFunc("POST "+string(action), func(w http.ResponseWriter, r *http.Request) {
-			if err := handle(r.Context(), action); err != nil {
+			if err := handle(r.Context(), s, action); err != nil {
 				http.Error(w, "control action failed", http.StatusServiceUnavailable)
 				return
 			}
@@ -112,9 +111,7 @@ func Start(dataDir string, initial Status, handle func(context.Context, Action) 
 		}),
 	}
 	if err := s.Publish(initial); err != nil {
-		listener.Close()
-		lock.Close()
-		return nil, err
+		return nil, errors.Join(err, listener.Close(), releaseLock(lock))
 	}
 	go func() {
 		defer close(s.served)
@@ -182,7 +179,7 @@ func (s *Server) Close() error {
 		if errors.Is(removeErr, os.ErrNotExist) {
 			removeErr = nil
 		}
-		s.closeErr = errors.Join(err, removeErr, s.lock.Close())
+		s.closeErr = errors.Join(err, removeErr, releaseLock(s.lock))
 	})
 	return s.closeErr
 }

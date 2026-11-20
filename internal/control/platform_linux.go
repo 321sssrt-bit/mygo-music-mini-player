@@ -14,6 +14,10 @@ func tryLock(file *os.File) error {
 	return err
 }
 
+func releaseLock(file *os.File) error {
+	return file.Close()
+}
+
 func replaceState(source, destination string) error {
 	return os.Rename(source, destination)
 }

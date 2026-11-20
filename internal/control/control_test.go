@@ -50,10 +50,7 @@ func TestLoopbackControl(t *testing.T) {
 	refreshed := initial
 	refreshed.DisplayPolicy = "pinned"
 	actions := make(chan control.Action, 4)
-	ready := make(chan struct{})
-	var server *control.Server
-	server, err := control.Start(dir, initial, func(_ context.Context, action control.Action) error {
-		<-ready
+	server, err := control.Start(dir, initial, func(_ context.Context, server *control.Server, action control.Action) error {
 		actions <- action
 		switch action {
 		case control.Show:
@@ -69,7 +66,6 @@ func TestLoopbackControl(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	close(ready)
 	defer server.Close()
 	entry := readDiscovery(t, dir)
 	if entry.Status != initial {

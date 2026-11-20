@@ -12,6 +12,7 @@ import (
 var (
 	kernel32                   = syscall.NewLazyDLL("kernel32.dll")
 	lockFileEx                 = kernel32.NewProc("LockFileEx")
+	unlockFileEx               = kernel32.NewProc("UnlockFileEx")
 	setFileInformationByHandle = kernel32.NewProc("SetFileInformationByHandle")
 )
 
@@ -27,6 +28,15 @@ func tryLock(file *os.File) error {
 		return ErrAlreadyRunning
 	}
 	return err
+}
+
+func releaseLock(file *os.File) error {
+	var offset syscall.Overlapped
+	ok, _, err := unlockFileEx.Call(file.Fd(), 0, 1, 0, uintptr(unsafe.Pointer(&offset)))
+	if ok == 0 {
+		return errors.Join(err, file.Close())
+	}
+	return file.Close()
 }
 
 func replaceState(source, destination string) error {
