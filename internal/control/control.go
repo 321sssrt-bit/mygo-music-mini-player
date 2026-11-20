@@ -149,7 +149,7 @@ func (s *Server) Publish(status Status) error {
 	if err := errors.Join(err, file.Close()); err != nil {
 		return err
 	}
-	if err := os.Rename(file.Name(), s.path); err != nil {
+	if err := replaceState(file.Name(), s.path); err != nil {
 		return err
 	}
 	s.status = status
@@ -178,7 +178,7 @@ func (s *Server) Close() error {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		s.closed = true
-		removeErr := os.Remove(s.path)
+		removeErr := removeState(s.path)
 		if errors.Is(removeErr, os.ErrNotExist) {
 			removeErr = nil
 		}

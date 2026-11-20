@@ -13,3 +13,11 @@ func tryLock(file *os.File) error {
 	}
 	return err
 }
+
+func replaceState(source, destination string) error {
+	return os.Rename(source, destination)
+}
+
+func removeState(path string) error {
+	return os.Remove(path)
+}

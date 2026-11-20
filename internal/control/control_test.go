@@ -151,6 +151,57 @@ func TestLoopbackControl(t *testing.T) {
 	t.Log("close removed discovery and stopped the listener")
 }
 
+func TestPublishOverlappingDiscoveryRead(t *testing.T) {
+	dir := t.TempDir()
+	initial := control.Status{State: "waiting", DisplayPolicy: "auto"}
+	s, err := control.Start(dir, initial, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	oldFile, err := os.Open(filepath.Join(dir, control.StateFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readDone := make(chan error, 1)
+	var old discovery
+	go func() {
+		defer close(readDone)
+		time.Sleep(30 * time.Millisecond)
+		err := json.NewDecoder(oldFile).Decode(&old)
+		readDone <- errors.Join(err, oldFile.Close())
+	}()
+	next := control.Status{State: "active", DisplayPolicy: "pinned", Visible: true}
+	publishErr := s.Publish(next)
+	if err := <-readDone; err != nil {
+		t.Fatal(err)
+	}
+	if publishErr != nil {
+		t.Fatal(publishErr)
+	}
+	if current := readDiscovery(t, dir); old.Status != initial || current.Status != next || old.Token != current.Token {
+		t.Fatal("discovery reader did not get a complete old or new snapshot")
+	}
+	t.Logf("open handle saw %+v; a fresh reader saw %+v", old.Status, next)
+
+	currentFile, err := os.Open(filepath.Join(dir, control.StateFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan error, 1)
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		released <- currentFile.Close()
+	}()
+	if err := errors.Join(s.Close(), <-released); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, control.StateFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a concurrent reader prevented discovery cleanup: %v", err)
+	}
+	t.Log("close removed discovery despite an overlapping reader")
+}
+
 func TestSingleInstanceAcrossProcesses(t *testing.T) {
 	const childDir = "MINI_PLAYER_TEST_LOCK_DIR"
 	if dir := os.Getenv(childDir); dir != "" {

@@ -68,6 +68,49 @@ func TestCompanionStopsWhenHostExits(t *testing.T) {
 	expectExit(t, ctx, done)
 }
 
+type transientObservation struct {
+	bridge.Fake
+	first bool
+}
+
+func (h *transientObservation) ObserveHost() (bridge.HostState, error) {
+	if !h.first {
+		h.first = true
+		return bridge.HostState{}, errors.New("temporary host observation failure")
+	}
+	return h.Fake.ObserveHost()
+}
+
+func TestInitialObservationFailureDoesNotStopCompanion(t *testing.T) {
+	var host transientObservation
+	host.SetSnapshot(bridge.FakeSnapshot{Host: bridge.HostState{Running: true}})
+	c := lifecycle.New(&host, false, nil)
+	ctx, states, done := run(t, c)
+	expectState(t, ctx, states, lifecycle.Active)
+	host.SetSnapshot(bridge.FakeSnapshot{})
+	expectState(t, ctx, states, lifecycle.Stopped)
+	expectExit(t, ctx, done)
+}
+
+func TestRefreshReturnsDuringFinalCleanup(t *testing.T) {
+	var host bridge.Fake
+	c := lifecycle.New(&host, false, nil)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := c.Run(ctx, func(state lifecycle.State) error {
+		if state != lifecycle.Stopped {
+			t.Fatalf("unexpected transition %s", state)
+		}
+		if err := c.Refresh(ctx); err == nil || errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("refresh while stopping = %v, want stopped error", err)
+		}
+		t.Log("refresh returned a stopped error during final cleanup")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGuardLifecycle(t *testing.T) {
 	var host bridge.Fake
 	command := []string{"mini-player", "--guard"}
